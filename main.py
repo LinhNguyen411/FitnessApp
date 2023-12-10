@@ -11,8 +11,8 @@ import tensorflow as tf
 from mediapipe.python.solutions import pose as mp_pose
 from mediapipe.python.solutions import drawing_utils as mp_drawing
 
-import time
 from datetime import timedelta
+import time
 
 class Page:
     def __init__(self, root):
@@ -24,8 +24,8 @@ class YogaPage(Page):
     def __init__(self, root):
         super().__init__(root)
 
-        self.pose_time = 60
-        self.warmup_time = 20
+        self.pose_time = 20
+        self.warmup_time = 10
 
         self.pose_class_names = ['Warrior One','Warrior Two','Warrior Three','Triangle',
                     'Tree', 'Downward Facing Dog','Upward Facing Dog',
@@ -42,6 +42,7 @@ class YogaPage(Page):
         self.time_var = tk.StringVar()
         self.command_var = tk.StringVar()
         self.current_pose_var = tk.StringVar()
+        self.track_pose = tk.StringVar()
 
         self.predict_lock = threading.Lock()
         self.predict_thread = None
@@ -60,10 +61,13 @@ class YogaPage(Page):
 
         self.draw_content()
 
+
     def init_value(self):
         self.predict_label = "Unknown"
 
         self.current_pose_index = 0
+
+        self.countdown = 3
 
         self.time_var.set("00:00:00")
         self.command_var.set("Welcome")
@@ -77,7 +81,8 @@ class YogaPage(Page):
         if self.update_id is not None:
             self.main_frame.after_cancel(self.update_id)
 
-        self.btn_start["text"] = "START"
+        self.is_camera_on = True
+        self.toggle_camera()
 
         self.reset_stopwatch()
 
@@ -85,10 +90,11 @@ class YogaPage(Page):
 
         self.init_value()
 
-
     def change_pose_img(self):
 
         self.current_pose_var.set(self.pose_class_names[self.current_pose_index])
+
+        self.track_pose.set("{}/{} {}".format(self.current_pose_index+1,len(self.pose_class_names),self.current_pose_var.get()))
 
         image = cv2.resize(
             cv2.imread('YogaPose/{}.png'.format(self.current_pose_var.get())),
@@ -116,12 +122,15 @@ class YogaPage(Page):
                 self.update_time_id = None
 
         self.time_var.set(str(self.elapsed_time)[0:8])
+
     def start_watch(self):
         self.running = True
         self.update_time()
+
     def stop_watch(self):
         self.running = False
         self.update_time()
+
     def reset_stopwatch(self):
         self.stop_watch()
         self.elapsed_time = timedelta()
@@ -150,15 +159,15 @@ class YogaPage(Page):
         self.label = ttk.Label(right_frame)
         self.label.pack(padx = 5, pady = 5)
 
-        self.time_label = tk.Label(right_frame, textvariable=self.current_pose_var, font=("Helvetica", 14))
-        self.time_label.pack(pady=10)
+        self.track_pose_label = tk.Label(right_frame, textvariable=self.track_pose, font=("Helvetica", 12))
+        self.track_pose_label.pack(pady=10)
 
         self.change_pose_img()
 
         self.time_label = tk.Label(right_frame, textvariable=self.time_var, font=("Helvetica", 28))
         self.time_label.pack(pady=10)
 
-        self.command_label = tk.Label(right_frame, textvariable=self.command_var, font=("Helvetica", 28), fg='#00ffff')
+        self.command_label = tk.Label(right_frame, textvariable=self.command_var, font=("Helvetica", 22), fg='#158aff')
         self.command_label.pack(pady=10)
 
         bottom_frame = tk.Frame(self.yoga_frame, highlightbackground='black',
@@ -172,6 +181,7 @@ class YogaPage(Page):
 
         self.btn_reset = tk.Button(bottom_frame, text="RESET", command=self.reset_training, font=("Helvetica", 18), width=10, relief='flat', bg='#ff0000', fg='#fff')
         self.btn_reset.pack(padx=5, pady=5, side=tk.LEFT)
+
     def toggle_camera(self):
         self.is_camera_on = not self.is_camera_on
         if self.is_camera_on:
@@ -186,15 +196,20 @@ class YogaPage(Page):
             if self.elapsed_time.total_seconds() == self.pose_time and self.is_training:
                 self.reset_stopwatch()
                 self.change_pose()
+                self.countdown = 0
                 self.is_training = False
             elif self.elapsed_time.total_seconds() == self.warmup_time and not self.is_training:
                 self.reset_stopwatch()
                 self.is_training = True
 
-            if self.elapsed_time.total_seconds() < self.warmup_time and not self.is_training and not self.running:
-                self.command_var.set("Warm Up")
-                self.start_watch()
-
+            if self.elapsed_time.total_seconds() < self.warmup_time and not self.is_training:
+                if not self.running:
+                    self.start_watch()
+                    self.command_var.set("Warm Up")
+                if self.warmup_time - self.elapsed_time.total_seconds() == self.countdown:
+                    value = str(self.countdown)
+                    self.command_var.set(value)
+                    self.countdown -= 1
 
             _, frame = self.camera.read()
             image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -228,9 +243,9 @@ class YogaPage(Page):
                     self.predict_label = "Unknown"
 
                 if self.predict_label == self.current_pose_var.get():
-                    self.command_var.set("Right pose")
+                    self.command_var.set("keep posture")
                 else:
-                    self.command_var.set("Wrong pose")
+                    self.command_var.set("Wrong posture")
 
             image = Image.fromarray(image)
             image = ImageTk.PhotoImage(image)
@@ -243,6 +258,7 @@ class YogaPage(Page):
         self.update_id = self.main_frame.after(33, self.update)
 
     def destroy(self):
+        self.reset_training()
         self.camera.release()
         super().destroy()
 
@@ -252,6 +268,13 @@ class YogaPage(Page):
             kp_list = np.expand_dims(kp_list, axis=0)
             result = self.model.predict(kp_list)
             self.predict_label = self.pose_class_names[np.argmax(result[0])]
+
+class GymPage(Page):
+    def __init__(self,root):
+        super().__init__(root)
+        self.lb = tk.Label(self.main_frame, text='Home Page\n\nPage: 1', font=('Bold', 30))
+
+        self.lb.pack(padx = 5, pady = 5)
 
 class HomePage(Page):
     def __init__(self,root):
@@ -286,21 +309,28 @@ class FitnessApp:
 
         self.window.mainloop()
     def draw_window(self):
-        self.options_frame = tk.Frame(self.window, bg='#c3c3c3')
+        self.options_frame = tk.Frame(self.window, bg='#158aff')
 
         self.home_btn = tk.Button(self.options_frame, text='Home', font=('Bold', 15),
-                          fg='#158aff', bd=0, bg='#c3c3c3',
+                          fg='#fff', bd=0, bg='#158aff',
                           command=lambda: self.indicate(self.home_indicate, HomePage))
         self.home_btn.place(x=15, y=50)
-        self.home_indicate = tk.Label(self.options_frame, text='', bg='#158aff')
+        self.home_indicate = tk.Label(self.options_frame, text='', bg='#fff')
         self.home_indicate.place(x=8, y=50-5, width=5, height=40)
 
         self.yoga_btn = tk.Button(self.options_frame, text='Yoga', font=('Bold', 15),
-                                  fg='#158aff', bd=0, bg='#c3c3c3',
+                                  fg='#fff', bd=0, bg='#158aff',
                                   command=lambda: self.indicate(self.yoga_indicate, YogaPage))
         self.yoga_btn.place(x=15, y=100)
-        self.yoga_indicate = tk.Label(self.options_frame, text='', bg='#c3c3c3')
+        self.yoga_indicate = tk.Label(self.options_frame, text='', bg='#158aff')
         self.yoga_indicate.place(x=8, y=100-5, width=5, height=40)
+
+        self.gym_btn = tk.Button(self.options_frame, text='Gym', font=('Bold', 15),
+                                  fg='#fff', bd=0, bg='#158aff',
+                                  command=lambda: self.indicate(self.gym_indicate, GymPage))
+        self.gym_btn.place(x=15, y=150)
+        self.gym_indicate = tk.Label(self.options_frame, text='', bg='#158aff')
+        self.gym_indicate.place(x=8, y=150 - 5, width=5, height=40)
 
         self.options_frame.pack(side=tk.LEFT)
         self.options_frame.pack_propagate(False)
@@ -314,14 +344,15 @@ class FitnessApp:
 
         self.content = HomePage(self.main_frame)
     def hide_indicators(self):
-        self.home_indicate.config(bg='#c3c3c3')
-        self.yoga_indicate.config(bg='#c3c3c3')
+        self.home_indicate.config(bg='#158aff')
+        self.yoga_indicate.config(bg='#158aff')
+        self.gym_indicate.config(bg='#158aff')
     def indicate(self, lb, page):
 
         if self.change_thread and self.change_thread.is_alive():
             return
         self.hide_indicators()
-        lb.config(bg='#158aff')
+        lb.config(bg='#fff')
 
         self.change_thread = threading.Thread(target=self.change_page, args=(page,), daemon=True)
         self.change_thread.start()
@@ -335,4 +366,4 @@ class FitnessApp:
         self.window.destroy()
 
 root = tk.Tk()
-app = FitnessApp(root, "Camera App")
+app = FitnessApp(root, "Training App")
