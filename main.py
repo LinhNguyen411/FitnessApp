@@ -14,12 +14,16 @@ from mediapipe.python.solutions import drawing_utils as mp_drawing
 from datetime import timedelta
 import time
 
+YOGA_MODEL = 'models/yogamodel.h5'
+GYM_MODEL = 'models/gymmodel.h5'
+
 class Page:
     def __init__(self, root):
         self.main_frame = tk.Frame(root)
         self.main_frame.pack(pady=5)
     def destroy(self):
         self.main_frame.destroy()
+
 class YogaPage(Page):
     def __init__(self, root):
         super().__init__(root)
@@ -37,9 +41,9 @@ class YogaPage(Page):
 
         self.pose_tracker = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
-        self.model = tf.keras.models.load_model('model.h5')
+        self.model = tf.keras.models.load_model(YOGA_MODEL)
 
-        self.time_var = tk.StringVar()
+
         self.command_var = tk.StringVar()
         self.current_pose_var = tk.StringVar()
         self.track_pose = tk.StringVar()
@@ -47,9 +51,11 @@ class YogaPage(Page):
         self.predict_lock = threading.Lock()
         self.predict_thread = None
 
-        self.update_time_id = None
+
         self.update_id = None
 
+        self.update_time_id = None
+        self.time_var = tk.StringVar()
         self.running = False
         self.elapsed_time = timedelta()
 
@@ -182,6 +188,8 @@ class YogaPage(Page):
         self.btn_reset = tk.Button(bottom_frame, text="RESET", command=self.reset_training, font=("Helvetica", 18), width=10, relief='flat', bg='#ff0000', fg='#fff')
         self.btn_reset.pack(padx=5, pady=5, side=tk.LEFT)
 
+
+
     def toggle_camera(self):
         self.is_camera_on = not self.is_camera_on
         if self.is_camera_on:
@@ -270,11 +278,374 @@ class YogaPage(Page):
             self.predict_label = self.pose_class_names[np.argmax(result[0])]
 
 class GymPage(Page):
-    def __init__(self,root):
+    def __init__(self, root):
         super().__init__(root)
-        self.lb = tk.Label(self.main_frame, text='Home Page\n\nPage: 1', font=('Bold', 30))
 
-        self.lb.pack(padx = 5, pady = 5)
+        self.rest_time = 10
+
+        self.joints = {
+            'Push-Up': {
+                'LEFT': [mp_pose.PoseLandmark.LEFT_SHOULDER.value, mp_pose.PoseLandmark.LEFT_ELBOW.value, mp_pose.PoseLandmark.LEFT_WRIST.value],
+                'RIGHT': [mp_pose.PoseLandmark.RIGHT_SHOULDER.value, mp_pose.PoseLandmark.RIGHT_ELBOW.value, mp_pose.PoseLandmark.RIGHT_WRIST.value]
+            },
+            'Squats': {
+                'LEFT': [mp_pose.PoseLandmark.LEFT_HIP.value, mp_pose.PoseLandmark.LEFT_KNEE.value, mp_pose.PoseLandmark.LEFT_ANKLE.value],
+                'RIGHT': [mp_pose.PoseLandmark.RIGHT_HIP.value, mp_pose.PoseLandmark.RIGHT_KNEE.value, mp_pose.PoseLandmark.RIGHT_ANKLE.value]
+            }
+        }
+
+        self.angles_check = {
+            'Push-Up': [160, 70],
+            'Squats' : [170, 85],
+        }
+
+        self.pose_class_names = ['Push-Up', 'Squats', "UnKnown"]
+
+        self.gym_frame = tk.Frame(self.main_frame)
+        self.gym_frame.pack(padx=10, pady=5)
+
+        self.pose_tracker = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+
+        self.model = tf.keras.models.load_model(GYM_MODEL)
+
+        self.command_var = tk.StringVar()
+        self.current_pose_name = tk.StringVar()
+        self.no_of_sets = tk.StringVar()
+        self.no_of_reps = tk.StringVar()
+
+        self.predict_thread = None
+
+        self.animate_thread = None
+        self.animate_lock = threading.Lock()
+
+        self.current_pose_name.set(self.pose_class_names[0])
+
+        self.update_time_id = None
+        self.update_id = None
+
+        self.predict_label = "Unknown"
+
+        self.is_camera_on = False
+        self.is_animate = True
+        self.is_training = False
+
+        self.n_time_steps = 10
+        self.kp_list = []
+
+        self.update_time_id = None
+        self.time_var = tk.StringVar()
+        self.running = False
+        self.elapsed_time = timedelta()
+        self.time_var.set("00:00:00")
+
+        self.time_track = None
+        self.sets_track = 1
+        self.reps_track = 0
+        self.stage_track = "Up"
+
+        self.command_var.set("Welcome")
+
+        self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        self.img_w = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
+        self.img_h = self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
+
+        self.update()
+
+        self.draw_content()
+
+    def draw_content(self):
+        top_frame = tk.Frame(self.gym_frame, highlightbackground='black',
+                             highlightthickness=2)
+        top_frame.pack()
+
+        left_frame = tk.Frame(top_frame, highlightbackground='black',
+                              highlightthickness=2)
+        left_frame.pack(side=tk.LEFT, padx=0, pady=0)
+        left_frame.pack_propagate(False)
+        left_frame.configure(width=self.img_w + 10, height=self.img_h + 10)
+
+        self.cam_screen = ttk.Label(left_frame)
+        self.cam_screen.pack(padx=10, pady=10)
+
+        self.right_frame = tk.Frame(top_frame, highlightbackground='black',
+                               highlightthickness=2)
+        self.right_frame.pack(side=tk.LEFT, padx=0, pady=0)
+        self.right_frame.pack_propagate(False)
+        self.right_frame.configure(width=300, height=self.img_h + 10)
+
+        self.label = ttk.Label(self.right_frame)
+        self.label.pack(padx=5, pady=5)
+
+        self.track_pose_label = tk.Label(self.right_frame, textvariable=self.current_pose_name, font=("Helvetica", 12))
+        self.track_pose_label.pack(pady=10)
+
+        self.time_label = tk.Label(self.right_frame, textvariable=self.time_var, font=("Helvetica", 14), bg="#158aff", fg="#fff")
+        self.time_label.pack(pady=10)
+
+
+        self.command_label = tk.Label(self.right_frame, textvariable=self.command_var, font=("Helvetica", 22), fg='#158aff')
+        self.command_label.pack(pady=10)
+
+        bottom_frame = tk.Frame(self.gym_frame, highlightbackground='black',
+                                highlightthickness=2)
+        bottom_frame.pack(pady=10)
+        bottom_frame.pack_propagate(False)
+        bottom_frame.configure(width=self.img_w + 300, height=150)
+
+        self.btn_start = tk.Button(bottom_frame, text="START", command=self.toggle_camera, font=("Helvetica", 18),
+                                   width=10, relief='flat', bg='#00ff00', fg='#000')
+        self.btn_start.pack(padx=5, pady=5, side=tk.LEFT)
+
+        lb = tk.Label(bottom_frame)
+        lb.pack(padx = 10, side = tk.LEFT)
+
+        combo_label = tk.Label(bottom_frame, text="Exercise:", font=("Helvetica", 14), fg='#158aff')
+        combo_label.pack(padx = 10, side = tk.LEFT)
+
+        self.my_combo = ttk.Combobox(bottom_frame, values=self.pose_class_names[:-1],font=("Helvetica", 14), width=10)
+        self.my_combo.current(0)
+        self.my_combo.pack(side = tk.LEFT)
+        self.my_combo.bind("<<ComboboxSelected>>",self.change_exercise)
+
+        self.change_label()
+
+        lb = tk.Label(bottom_frame)
+        lb.pack(padx=10, side=tk.LEFT)
+
+        sets_label = tk.Label(bottom_frame, text="Sets:", font=("Helvetica", 14), fg='#158aff')
+        sets_label.pack(padx=10, side=tk.LEFT)
+
+        self.sets_input = ttk.Entry(bottom_frame, textvariable=self.no_of_sets,width=5,font=("Helvetica", 14))
+        self.sets_input.pack(side = tk.LEFT)
+
+        lb = tk.Label(bottom_frame)
+        lb.pack(padx=10, side=tk.LEFT)
+
+        reps_label = tk.Label(bottom_frame, text="Reps:", font=("Helvetica", 14), fg='#158aff')
+        reps_label.pack(padx=10, side=tk.LEFT)
+
+        self.reps_input = ttk.Entry(bottom_frame, textvariable=self.no_of_reps, width=5,font=("Helvetica", 14))
+        self.reps_input.pack(side=tk.LEFT)
+
+    def reset_training(self):
+        if self.update_id is not None:
+            self.main_frame.after_cancel(self.update_id)
+
+        self.btn_start["text"] = "START"
+        self.btn_start['bg'] = '#00ff00'
+
+        self.sets_input.config(state="enabled")
+        self.reps_input.config(state="enabled")
+
+        self.command_var.set("Welcome")
+
+        self.is_camera_on = False
+        self.is_training = False
+
+        self.reps_track = 0
+        self.sets_track = 1
+
+        self.reset_stopwatch()
+
+        self.kp_list = []
+
+        self.update()
+
+    def start_training(self):
+        if self.no_of_sets.get() and self.no_of_reps.get() and int(self.no_of_sets.get()) >= 0 and int(
+                self.no_of_reps.get()) >= 0:
+            self.btn_start["text"] = "STOP"
+            self.btn_start['bg'] = '#ff0000'
+
+            self.sets_input.config(state="disabled")
+            self.reps_input.config(state="disabled")
+
+            self.is_camera_on = True
+            self.is_training = True
+            if not self.running:
+                self.start_watch()
+
+    def change_exercise(self,e):
+        if self.current_pose_name.get() == self.my_combo.get():
+            return
+        self.change_label()
+        self.reset_training()
+
+    def change_label(self):
+        if self.animate_thread and self.animate_thread.is_alive():
+            self.is_animate = False
+
+        self.current_pose_name.set(self.my_combo.get())
+        self.animate_thread = threading.Thread(target=self.change_pose_img,daemon=True)
+        self.animate_thread.start()
+
+    def change_pose_img(self):
+        file = 'GymPose/{}.mp4'.format(self.current_pose_name.get())
+        cap = cv2.VideoCapture(file)
+        time.sleep(1)
+        if not self.is_animate:
+            self.is_animate = not self.is_animate
+        frame_counter = 0
+        while (self.is_animate):
+            ret, frame = cap.read()
+            if ret:
+                frame_counter += 1
+                if frame_counter == cap.get(cv2.CAP_PROP_FRAME_COUNT):
+                    time.sleep(1)
+                    frame_counter = 0
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                image = cv2.resize(frame,(200, 200))
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                image = Image.fromarray(image)
+                image = ImageTk.PhotoImage(image)
+
+                self.label.config(image=image)
+                self.label.image = image
+            else:
+                break
+
+        cap.release()
+
+    def toggle_camera(self):
+        if self.is_camera_on:
+            self.reset_training()
+        else:
+            self.start_training()
+
+    def update_time(self):
+        if self.running:
+            self.elapsed_time += timedelta(seconds=1)
+            self.update_time_id = self.time_label.after(1000, self.update_time)
+        else:
+            if self.update_time_id is not None:
+                self.time_label.after_cancel(self.update_time_id)
+                self.update_time_id = None
+
+        self.time_var.set(str(self.elapsed_time)[0:8])
+
+    def start_watch(self):
+        self.running = True
+        self.update_time()
+
+    def stop_watch(self):
+        self.running = False
+        self.update_time()
+
+    def reset_stopwatch(self):
+        self.stop_watch()
+        self.elapsed_time = timedelta()
+        self.update_time()
+
+    def calculate_angle(self, landmarks):
+        current_pose = self.current_pose_name.get()
+        side = 'LEFT'
+        if not all([landmarks[joint].visibility > 0.5 for joint in self.joints[current_pose][side]]):
+            side = 'RIGHT'
+
+        a = [landmarks[self.joints[current_pose][side][0]].x,
+                    landmarks[self.joints[current_pose][side][0]].y]
+        b = [landmarks[self.joints[current_pose][side][1]].x,
+                 landmarks[self.joints[current_pose][side][1]].y]
+        c = [landmarks[self.joints[current_pose][side][2]].x,
+                 landmarks[self.joints[current_pose][side][2]].y]
+
+        radians = np.arctan2(c[1] - b[1], c[0] - b[0]) - np.arctan2(a[1] - b[1], a[0] - b[0])
+        angle = np.abs(radians * 180.0 / np.pi)
+
+        if angle > 180.0:
+            angle = 360 - angle
+
+        return angle
+
+    def update(self):
+        if self.is_camera_on:
+            _, frame = self.camera.read()
+            image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            if self.is_training:
+                image.flags.writeable = False
+
+                result = self.pose_tracker.process(image=image)
+
+                image.flags.writeable = True
+
+                pose_landmarks = result.pose_landmarks
+
+                if pose_landmarks:
+                    mp_drawing.draw_landmarks(image, pose_landmarks,
+                                              mp_pose.POSE_CONNECTIONS,
+                                              mp_drawing.DrawingSpec(color=(245, 117, 66), thickness=2,
+                                                                     circle_radius=2),
+                                              mp_drawing.DrawingSpec(color=(245, 66, 230), thickness=2, circle_radius=2)
+                                              )
+
+
+                    landmarks = [keypoint for landmark in pose_landmarks.landmark for keypoint in
+                                      [landmark.x, landmark.y, landmark.z, landmark.visibility]]
+                    self.kp_list.append(landmarks)
+                    if len(self.kp_list) == self.n_time_steps:
+                        self.predict_thread = threading.Thread(target=self.detect, args=(self.kp_list,))
+                        self.predict_thread.start()
+                        self.kp_list = []
+
+                    angle = self.calculate_angle(pose_landmarks.landmark)
+                    print(angle)
+                    current_pose = self.current_pose_name.get()
+                    if self.predict_label == current_pose:
+                        if angle > self.angles_check[current_pose][0]  and self.stage_track == 'Down':
+                            self.stage_track = "Up"
+                            self.reps_track += 1
+                        if angle < self.angles_check[current_pose][1] and self.stage_track == 'Up':
+                            self.stage_track = "Down"
+                else:
+                    self.predict_label = "Unknown"
+
+                if self.predict_label == self.current_pose_name.get():
+                    text = 'Set {} of {}\n{} {}'.format(self.sets_track, self.no_of_sets.get(), self.reps_track, self.stage_track)
+                    self.command_var.set(text)
+                else:
+                    self.command_var.set("Wrong posture")
+
+                if self.reps_track == int(self.no_of_reps.get()):
+                    self.is_training = False
+
+            else:
+                if self.sets_track == int(self.no_of_sets.get()):
+                    self.stop_watch()
+                    self.command_var.set('Well done!')
+                    self.btn_start["text"] = "RESET"
+                    self.btn_start['bg'] = '#00ffff'
+                else:
+                    if not self.time_track:
+                        self.time_track = self.elapsed_time.total_seconds()
+
+                    self.command_var.set("Rest\n{}".format(int(self.time_track + self.rest_time - self.elapsed_time.total_seconds())))
+                    if self.elapsed_time.total_seconds() - self.time_track == self.rest_time:
+                        self.is_training = True
+                        self.reps_track = 0
+                        self.sets_track += 1
+
+            image = Image.fromarray(image)
+            image = ImageTk.PhotoImage(image)
+
+            self.cam_screen.config(image=image)
+            self.cam_screen.image = image
+        self.update_id = self.main_frame.after(33, self.update)
+
+    def destroy(self):
+        self.reset_training()
+        self.camera.release()
+        self.is_animate = False
+        if self.running:
+            self.stop_watch()
+        if self.update_id:
+            self.main_frame.after_cancel(self.update_id)
+        super().destroy()
+
+    def detect(self, kp_list):
+        kp_list = np.array(kp_list)
+        kp_list = np.expand_dims(kp_list, axis=0)
+        result = self.model.predict(kp_list)
+        self.predict_label = self.pose_class_names[np.argmax(result[0])]
 
 class HomePage(Page):
     def __init__(self,root):
@@ -289,7 +660,6 @@ class HomePage(Page):
         self.lb.config(image = image)
         self.lb.image = image
         self.lb.pack(padx = 5, pady = 5)
-
 
 class FitnessApp:
     def __init__(self, window, window_title):
@@ -365,5 +735,6 @@ class FitnessApp:
         self.content.destroy()
         self.window.destroy()
 
-root = tk.Tk()
-app = FitnessApp(root, "Training App")
+if __name__ == '__main__':
+    root = tk.Tk()
+    app = FitnessApp(root, "Training App")
