@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 
-import time, threading
+import threading
 from PIL import Image, ImageTk
 import cv2
 
@@ -44,8 +44,8 @@ class HomePage(Page):
 class YogaPage(Page):
     def __init__(self, root):
         super().__init__(root)
-        self.pose_time = 10
-        self.warmup_time = 5
+        self.pose_time = 20
+        self.warmup_time = 10
 
         self.pose_class_names = ['Warrior One', 'Warrior Two', 'Warrior Three', 'Triangle',
                                  'Tree', 'Downward Facing Dog', 'Upward Facing Dog',
@@ -290,6 +290,7 @@ class YogaPage(Page):
             self.predict_label = self.pose_class_names[np.argmax(result[0])]
 
 class GymPage(Page):
+
     def __init__(self, root):
         super().__init__(root)
 
@@ -810,11 +811,11 @@ class FitnessApp(tk.Frame):
             page = GymPage(self.content_frame)
 
 
-
 if __name__ == '__main__':
     root = tk.Tk()
-    root.title('My App')
-    root. geometry('1000x600')
+    root.title('FitnessApp')
+    root.geometry('1000x600')
+    root.iconbitmap('icon.ico')
     root.resizable(width=False, height=False)
     my_app_instance = FitnessApp(root)
     my_app_instance.create_initial_widgets()
