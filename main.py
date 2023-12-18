@@ -412,6 +412,7 @@ class GymPage(Page):
         self.sets_track = 1
         self.reps_track = 0
         self.stage_track = None
+        self.warm_up = 0
 
         self.command_var.set("Welcome")
 
@@ -515,6 +516,7 @@ class GymPage(Page):
 
         self.reps_track = 0
         self.sets_track = 1
+        self.warm_up = 0
 
         self.reset_stopwatch()
 
@@ -532,7 +534,6 @@ class GymPage(Page):
             self.reps_input.config(state="disabled")
 
             self.is_camera_on = True
-            self.is_training = True
             if not self.running:
                 self.start_watch()
 
@@ -635,6 +636,7 @@ class GymPage(Page):
         if self.is_camera_on:
             _, frame = self.camera.read()
             image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
             if self.is_training:
                 image.flags.writeable = False
 
@@ -693,22 +695,29 @@ class GymPage(Page):
                     self.is_training = False
 
             else:
-                if self.sets_track == int(self.no_of_sets.get()):
-                    self.stop_watch()
-                    self.command_var.set('Well done!')
-                    self.btn_start["text"] = "RESET"
-                    self.btn_start['bg'] = '#00ffff'
-                else:
-                    if not self.time_track:
-                        self.time_track = self.elapsed_time.total_seconds()
-
-                    self.command_var.set(
-                        "Rest\n{}".format(int(self.time_track + self.rest_time - self.elapsed_time.total_seconds())))
-                    if self.elapsed_time.total_seconds() - self.time_track == self.rest_time:
+                if self.warm_up <= 10:
+                    self.warm_up = self.elapsed_time.total_seconds()
+                    self.command_var.set('Warm Up\n' + str(10 - self.warm_up))
+                    if self.warm_up == 10:
                         self.is_training = True
-                        self.reps_track = 0
-                        self.sets_track += 1
-                        self.time_track = None
+
+                else:
+                    if self.sets_track == int(self.no_of_sets.get()):
+                        self.stop_watch()
+                        self.command_var.set('Well done!')
+                        self.btn_start["text"] = "RESET"
+                        self.btn_start['bg'] = '#00ffff'
+                    else:
+                        if not self.time_track:
+                            self.time_track = self.elapsed_time.total_seconds()
+
+                        self.command_var.set(
+                            "Rest\n{}".format(int(self.time_track + self.rest_time - self.elapsed_time.total_seconds())))
+                        if self.elapsed_time.total_seconds() - self.time_track == self.rest_time:
+                            self.is_training = True
+                            self.reps_track = 0
+                            self.sets_track += 1
+                            self.time_track = None
 
             image = Image.fromarray(image)
             image = ImageTk.PhotoImage(image)
@@ -816,6 +825,7 @@ if __name__ == '__main__':
     root.title('FitnessApp')
     root.geometry('1000x600')
     root.iconbitmap('icon.ico')
+    root.resizable(False, False)
     root.resizable(width=False, height=False)
     my_app_instance = FitnessApp(root)
     my_app_instance.create_initial_widgets()
